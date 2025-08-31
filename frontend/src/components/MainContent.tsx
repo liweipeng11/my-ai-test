@@ -1,5 +1,5 @@
-import { useRef, useEffect } from 'react'
-import { Input } from 'antd'
+import { useRef, useEffect, useState } from 'react'
+import { Input, message } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -31,8 +31,13 @@ interface MainContentProps {
   currentConversationId: string | null;
   text: string;
   loading: boolean;
+  models: any[];
+  selectedModel: string;
+  isReasoningMode: boolean;
   onTextChange: (value: string) => void;
   onSend: () => void;
+  onModelChange: (modelId: string) => void;
+  onReasoningModeChange: (value: boolean) => void;
 }
 
 export default function MainContent({
@@ -41,10 +46,21 @@ export default function MainContent({
   currentConversationId,
   text,
   loading,
+  models,
+  selectedModel,
+  isReasoningMode,
   onTextChange,
-  onSend
+  onSend,
+  onModelChange,
+  onReasoningModeChange
 }: MainContentProps) {
   const resultRef = useRef<HTMLDivElement>(null);
+  // 使用props传入的isReasoningMode状态
+
+  // 根据深度思考模式筛选模型
+  const filteredModels = isReasoningMode 
+    ? models.filter(m => m.is_reasoning)
+    : models.filter(m => !m.is_reasoning);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -59,6 +75,8 @@ export default function MainContent({
       onSend();
     }
   };
+
+  const [messageApi, contextHolder] = message.useMessage();
 
   const copyToClipboard = (content: string, reasoning?: string) => {
     const fullContent = reasoning 
@@ -189,20 +207,65 @@ export default function MainContent({
       </div>
       
       <div className="chat-input-container">
-        <div className="model-selector">
-          <span className="model-selector-icon">
+        <div className="toolbar">
+          <div className="model-selector">
+            <span className="model-selector-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+            <select 
+              className="model-select"
+              value={selectedModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              disabled={loading}
+            >
+              {filteredModels.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            className={`reasoning-toggle ${isReasoningMode ? 'active' : ''}`}
+            onClick={() => {
+              const newMode = !isReasoningMode;
+              const currentModel = models.find(m => m.id === selectedModel);
+              
+              if (newMode && !currentModel?.is_reasoning) {
+                // 自动切换到第一个可用的推理模型
+                const reasoningModel = models.find(m => m.is_reasoning);
+                if (reasoningModel) {
+                  onModelChange(reasoningModel.id);
+                  onReasoningModeChange(true);
+                } else {
+                  message.warning('没有可用的推理模型');
+                }
+                return;
+              }
+              
+              if (!newMode && currentModel?.is_reasoning) {
+                // 自动切换到第一个可用的非推理模型
+                const nonReasoningModel = models.find(m => !m.is_reasoning);
+                if (nonReasoningModel) {
+                  onModelChange(nonReasoningModel.id);
+                }
+              }
+              
+              onReasoningModeChange(newMode);
+            }}
+            disabled={loading}
+            title={isReasoningMode ? "关闭深度思考模式" : "开启深度思考模式"}
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M12 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V12C21 12.5304 20.7893 13.0391 20.4142 13.4142C20.0391 13.7893 19.5304 14 19 14H12M5 19H12C12.5304 19 13.0391 18.7893 13.4142 18.4142C13.7893 18.0391 14 17.5304 14 17V10C14 9.46957 13.7893 8.96086 13.4142 8.58579C13.0391 8.21071 12.5304 8 12 8H5C4.46957 8 3.96086 8.21071 3.58579 8.58579C3.21071 8.96086 3 9.46957 3 10V17C3 17.5304 3.21071 18.0391 3.58579 18.4142C3.96086 18.7893 4.46957 19 5 19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-          </span>
-          <span className="model-name">默认模型</span>
-          <span className="model-selector-arrow">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </span>
+            <span>深度思考</span>
+          </button>
         </div>
         
         <div className="chat-input-wrapper">

@@ -16,10 +16,10 @@ const CONVERSATIONS_DIR = path.join(DATA_DIR, "conversations");
 
 // 确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR);
+    fs.mkdirSync(DATA_DIR);
 }
 if (!fs.existsSync(CONVERSATIONS_DIR)) {
-  fs.mkdirSync(CONVERSATIONS_DIR);
+    fs.mkdirSync(CONVERSATIONS_DIR);
 }
 
 // 创建 OpenAI 实例（延迟初始化）
@@ -60,17 +60,18 @@ const systemPrompt = `
 
 router.post('/summarize', async (req, res) => {
     try {
-        const { text, conversationId, previousMessages = [] } = req.body;
-        
-        console.log('收到请求:', { text, conversationId, previousMessagesCount: previousMessages.length });
-        
+        const { text, conversationId, previousMessages = [], model, isReasoningMode = false } = req.body;
+        const selectedModel = model || process.env.OPENAI_MODEL || 'gpt-4o';
+
+        console.log('收到请求:', { text, conversationId, previousMessagesCount: previousMessages.length, model: selectedModel });
+
         // 设置响应头，支持流式传输
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-        
+
         let messages = [];
-        
+
         // 如果提供了对话ID，尝试从文件加载消息历史
         if (conversationId) {
             const filePath = path.join(CONVERSATIONS_DIR, `${conversationId}.json`);
@@ -81,14 +82,14 @@ router.post('/summarize', async (req, res) => {
                     role: msg.role === 'ai' ? 'assistant' : msg.role,
                     content: msg.content
                 }));
-                
+
                 // 构建消息历史，限制最多10条历史消息以避免超出token限制
                 messages = [
                     { role: "system", content: systemPrompt },
                     ...historyMessages.slice(-10),
                     { role: "user", content: text }
                 ];
-                
+
                 console.log('使用历史消息:', historyMessages.length);
             } else {
                 // 如果对话ID不存在，创建新对话
@@ -110,46 +111,49 @@ router.post('/summarize', async (req, res) => {
             ];
             console.log('使用前端传来的消息');
         }
-        
+
         console.log('发送到API的消息数量:', messages.length);
-        
+
         // 创建流式响应
         const stream = await getOpenAIInstance().chat.completions.create({
-            model: process.env.OPENAI_MODEL,
+            model: selectedModel,
             messages: messages,
             stream: true, // 启用流式响应
         });
-        
+
         let fullContent = '';
         let fullReasoning = '';
-        
+
         // 发送流式数据到客户端
         for await (const chunk of stream) {
-            const reasoning = chunk.choices[0]?.delta?.reasoning_content || '';
             const content = chunk.choices[0]?.delta?.content || '';
-            
-            fullReasoning += reasoning;
+            let reasoning = chunk.choices[0]?.delta?.reasoning_content || '';
+
+            if (isReasoningMode) {
+                fullReasoning += reasoning;
+            }
+
             fullContent += content;
-            
-            if (reasoning) {
+
+            if (reasoning && isReasoningMode) {
                 const data = `data: ${JSON.stringify({ reasoning })}\n\n`;
                 console.log('发送推理数据:', data);
                 res.write(data);
             }
-            
+
             if (content) {
                 const data = `data: ${JSON.stringify({ content })}\n\n`;
                 console.log('发送内容数据:', data);
                 res.write(data);
             }
         }
-        
+
         // 如果提供了对话ID，保存消息到对话文件
         if (conversationId) {
             const filePath = path.join(CONVERSATIONS_DIR, `${conversationId}.json`);
             let conversation;
             let isFirstMessage = false;
-            
+
             // 如果对话文件存在，读取并更新
             if (fs.existsSync(filePath)) {
                 conversation = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -165,7 +169,7 @@ router.post('/summarize', async (req, res) => {
                 };
                 isFirstMessage = true;
             }
-            
+
             // 添加用户消息
             conversation.messages.push({
                 id: Date.now().toString(),
@@ -173,7 +177,7 @@ router.post('/summarize', async (req, res) => {
                 content: text,
                 timestamp: Date.now()
             });
-            
+
             // 添加AI回复
             conversation.messages.push({
                 id: (Date.now() + 1).toString(),
@@ -182,7 +186,7 @@ router.post('/summarize', async (req, res) => {
                 reasoning: fullReasoning,
                 timestamp: Date.now() + 1
             });
-            
+
             // 如果是第一条消息，根据内容生成对话标题
             if (isFirstMessage) {
                 try {
@@ -190,24 +194,22 @@ router.post('/summarize', async (req, res) => {
                     const titleResponse = await getOpenAIInstance().chat.completions.create({
                         model: 'Qwen/Qwen2.5-7B-Instruct',
                         messages: [
-                            { 
-                                role: "system", 
-                                content: "你是一个对话标题生成器。根据用户的第一条消息，生成一个简短、具体的标题，不超过15个字。不要使用引号，不要添加任何解释，只返回标题文本。" 
+                            {
+                                role: "system",
+                                content: "你是一个对话标题生成器。根据用户的第一条消息，生成一个简短、具体的标题，不超过15个字。不要使用引号，不要添加任何解释，只返回标题文本。"
                             },
                             { role: "user", content: text }
                         ],
                         max_tokens: 30,
                     });
-                    
+
                     const generatedTitle = titleResponse.choices[0].message.content.trim();
                     if (generatedTitle) {
                         conversation.title = generatedTitle;
                         console.log('自动生成标题:', generatedTitle);
-                        
+
                         // 发送标题更新事件到前端（确保单独发送）
-                        const titleUpdateEvent = `data: ${JSON.stringify({ type: 'title_update', title: generatedTitle })}\
-\
-`;
+                        const titleUpdateEvent = `data: ${JSON.stringify({ type: 'title_update', title: generatedTitle })}\n\n`;
                         res.write(titleUpdateEvent);
                         // 确保事件完全发送后再继续
                         await new Promise(resolve => setTimeout(resolve, 10));
@@ -218,14 +220,14 @@ router.post('/summarize', async (req, res) => {
                     conversation.title = text.substring(0, 15) + (text.length > 15 ? '...' : '');
                 }
             }
-            
+
             conversation.updatedAt = Date.now();
-            
+
             // 保存对话
             fs.writeFileSync(filePath, JSON.stringify(conversation, null, 2));
             console.log('对话已保存:', conversationId);
         }
-        
+
         // 结束响应
         res.write('data: [DONE]\n\n');
         res.end();
