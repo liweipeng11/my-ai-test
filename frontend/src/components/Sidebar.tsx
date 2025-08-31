@@ -97,7 +97,11 @@ export default function Sidebar({
               className={`chat-item ${currentConversationId === conversation.id ? 'active' : ''}`}
               onClick={() => onLoadConversation(conversation.id)}
             >
-              <div className="chat-item-title">{conversation.title}</div>
+              <div className="chat-item-title">
+                {conversation.title && conversation.title !== '新对话' && conversation.title !== '未命名对话' 
+                  ? conversation.title 
+                  : '新对话'}
+              </div>
               <div className="chat-item-actions">
                 <button 
                   className="chat-item-action" 

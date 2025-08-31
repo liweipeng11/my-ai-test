@@ -77,7 +77,7 @@ function App() {
   const createNewConversation = async () => {
     try {
       setLoading(true);
-      const response = await api.post('/conversations', { title: '新对话' });
+      const response = await api.post('/conversations', { title: '' });
       
       setCurrentConversationId(response.data.id);
       setMessages([]);
@@ -144,7 +144,7 @@ function App() {
     if (!conversationId) {
       try {
         setLoading(true);
-        const response = await api.post('/conversations', { title: '新对话' });
+        const response = await api.post('/conversations', { title: '' });
         
         conversationId = response.data.id;
         setCurrentConversationId(conversationId);
@@ -221,6 +221,7 @@ function App() {
         
         const decoder = new TextDecoder();
         let buffer = '';
+        let titleUpdated = false;
         
         function processText(text: string): void {
           buffer += text;
@@ -238,41 +239,56 @@ function App() {
                 continue;
               }
               
-              try {
-                console.log('解析数据:', data);
-                const parsed = JSON.parse(data);
+              // 处理可能的事件合并情况
+              const events = data.split('data: ');
+              for (const eventData of events) {
+                if (!eventData.trim()) continue;
                 
-                if (parsed.content) {
-                  console.log('收到内容:', parsed.content);
-                  setMessages(prev => {
-                    const updated = [...prev];
-                    const aiMessageIndex = updated.findIndex(msg => msg.id === aiMessageId);
-                    if (aiMessageIndex >= 0) {
-                      updated[aiMessageIndex] = {
-                        ...updated[aiMessageIndex],
-                        content: (updated[aiMessageIndex].content || '') + parsed.content
-                      };
-                    }
-                    return updated;
-                  });
-                }
+                try {
+                  console.log('解析数据:', eventData);
+                  const parsed = JSON.parse(eventData);
+                  
+                  // 处理标题更新事件
+                  if (parsed.type === 'title_update') {
+                    console.log('收到标题更新:', parsed.title);
+                    titleUpdated = true;
+                    // 立即刷新对话列表以显示新标题
+                    fetchConversations();
+                    continue;
+                  }
                 
-                if (parsed.reasoning) {
-                  console.log('收到推理:', parsed.reasoning);
-                  setMessages(prev => {
-                    const updated = [...prev];
-                    const aiMessageIndex = updated.findIndex(msg => msg.id === aiMessageId);
-                    if (aiMessageIndex >= 0) {
-                      updated[aiMessageIndex] = {
-                        ...updated[aiMessageIndex],
-                        reasoning: (updated[aiMessageIndex].reasoning || '') + parsed.reasoning
-                      };
-                    }
-                    return updated;
-                  });
+                  if (parsed.content) {
+                    console.log('收到内容:', parsed.content);
+                    setMessages(prev => {
+                      const updated = [...prev];
+                      const aiMessageIndex = updated.findIndex(msg => msg.id === aiMessageId);
+                      if (aiMessageIndex >= 0) {
+                        updated[aiMessageIndex] = {
+                          ...updated[aiMessageIndex],
+                          content: (updated[aiMessageIndex].content || '') + parsed.content
+                        };
+                      }
+                      return updated;
+                    });
+                  }
+                  
+                  if (parsed.reasoning) {
+                    console.log('收到推理:', parsed.reasoning);
+                    setMessages(prev => {
+                      const updated = [...prev];
+                      const aiMessageIndex = updated.findIndex(msg => msg.id === aiMessageId);
+                      if (aiMessageIndex >= 0) {
+                        updated[aiMessageIndex] = {
+                          ...updated[aiMessageIndex],
+                          reasoning: (updated[aiMessageIndex].reasoning || '') + parsed.reasoning
+                        };
+                      }
+                      return updated;
+                    });
+                  }
+                } catch (e) {
+                  console.error('解析响应数据失败:', e, '原始数据:', eventData);
                 }
-              } catch (e) {
-                console.error('解析响应数据失败:', e, '原始数据:', data);
               }
             }
           }
@@ -309,20 +325,18 @@ function App() {
       
       console.log('请求完成');
       
-      // 只更新对话列表，不重新加载当前对话
-      // 这样可以保留流式接收过程中更新的消息状态
-      await fetchConversations();
+      // 如果没有收到标题更新事件，再刷新对话列表
+      if (!titleUpdated) {
+        await fetchConversations();
+      }
+      
+      // 如果当前对话有更新，重新加载当前对话以获取最新消息
+      if (currentConversationId) {
+        await loadConversation(currentConversationId);
+      }
     } catch (error) {
       console.error('请求失败:', error)
-      setMessages(prev => [
-        ...prev, 
-        { 
-          id: Date.now().toString(), 
-          role: 'ai', 
-          content: '请求失败，请重试', 
-          timestamp: Date.now() 
-        }
-      ]);
+      // 错误已经在fetch的catch块中处理了，这里不需要重复添加错误消息
     } finally {
       setLoading(false)
     }

@@ -188,7 +188,7 @@ router.post('/summarize', async (req, res) => {
                 try {
                     // 使用 OpenAI 生成标题
                     const titleResponse = await getOpenAIInstance().chat.completions.create({
-                        model: process.env.OPENAI_MODEL,
+                        model: 'Qwen/Qwen2.5-7B-Instruct',
                         messages: [
                             { 
                                 role: "system", 
@@ -203,6 +203,14 @@ router.post('/summarize', async (req, res) => {
                     if (generatedTitle) {
                         conversation.title = generatedTitle;
                         console.log('自动生成标题:', generatedTitle);
+                        
+                        // 发送标题更新事件到前端（确保单独发送）
+                        const titleUpdateEvent = `data: ${JSON.stringify({ type: 'title_update', title: generatedTitle })}\
+\
+`;
+                        res.write(titleUpdateEvent);
+                        // 确保事件完全发送后再继续
+                        await new Promise(resolve => setTimeout(resolve, 10));
                     }
                 } catch (titleError) {
                     console.error('生成标题失败:', titleError);
